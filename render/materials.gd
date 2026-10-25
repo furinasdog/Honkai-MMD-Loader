@@ -34,7 +34,7 @@ static func classify_material(name: String) -> String:
 		return "hair"
 	if _contains(value, ["衣", "裙", "服", "cloth", "dress", "coat", "glove", "套"]):
 		return "cloth"
-	if _contains(value, ["肌", "皮肤", "皮膚", "skin", "手", "腿", "body"]):
+	if _contains(value, ["肌", "皮肤", "皮膚", "skin", "手", "腿", "body", "脖", "颈", "頸", "neck"]):
 		return "skin"
 	return "cloth"
 

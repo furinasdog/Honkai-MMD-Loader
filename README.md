@@ -12,6 +12,8 @@ The runtime `HonkaiPMXLoader.load_file(path, verified_archive_index)` builds a `
 
 `HonkaiMMDMaterials.apply(root, metadata)` installs the toon and outline shaders. It preserves texture UVs, source diffuse colors, single/double-sided surfaces and material boundaries. The face uses a head-local shadow field; hair uses a stylized highlight; outlines preserve PMX per-vertex width and optional source colors. Character assets and game shaders are not included.
 
+The face shadow is a two-tone field, independent of lip/nose/chin surface normals and view-dependent rim lighting. Tonal boundaries use only a screen-pixel antialiasing transition, avoiding a soft lower-face "beard" under high lights or mouth morphs. Clothing and hair keep their toon normal bands; authored texture colors are preserved.
+
 ## Build and validation
 
 Windows x64, C++17, CMake 3.20+, standard single-precision Godot 4.7. Tested with Visual Studio 2026. GCC/Clang and other platforms have not been validated.
