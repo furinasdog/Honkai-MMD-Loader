@@ -25,6 +25,8 @@
 #include <iostream>
 #include <vector>
 #include <stdexcept>
+#include <cmath>
+#include <cstring>
 
 kaitai::kstream::kstream(std::istream* io) {
     m_io = io;
@@ -276,7 +278,10 @@ float kaitai::kstream::read_f4le() {
 #if __BYTE_ORDER == __BIG_ENDIAN
     t = bswap_32(t);
 #endif
-    return reinterpret_cast<float&>(t);
+    float value;
+    std::memcpy(&value, &t, sizeof(value));
+    if (!std::isfinite(value)) throw std::runtime_error("PMX contains a non-finite float");
+    return value;
 }
 
 double kaitai::kstream::read_f8le() {
@@ -380,13 +385,9 @@ uint64_t kaitai::kstream::get_mask_ones(int n) {
 // ========================================================================
 
 std::string kaitai::kstream::read_bytes(std::streamsize len) {
-    std::vector<char> result(len);
-
-    // NOTE: streamsize type is signed, negative values are only *supposed* to not be used.
-    // http://en.cppreference.com/w/cpp/io/streamsize
-    if (len < 0) {
-        return std::string();    
-    }
+    if (len < 0 || static_cast<uint64_t>(len) > size() - pos())
+        throw std::runtime_error("PMX byte range exceeds the file");
+    std::vector<char> result(static_cast<size_t>(len));
 
     if (len > 0) {
         m_io->read(&result[0], len);
@@ -677,6 +678,28 @@ std::string kaitai::kstream::bytes_to_str(std::string src, std::string src_enc) 
     }
 
     return dst;
+}
+#elif defined(KS_STR_ENCODING_WIN32)
+#include <windows.h>
+std::string kaitai::kstream::bytes_to_str(std::string src, std::string encoding) {
+    if (src.empty()) return {};
+    std::wstring wide;
+    if (encoding == "UTF-16LE") {
+        if (src.size() % 2) throw std::runtime_error("Invalid UTF-16 PMX string");
+        wide.resize(src.size() / 2);
+        std::memcpy(wide.data(), src.data(), src.size());
+    } else if (encoding == "UTF-8") {
+        int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src.data(), static_cast<int>(src.size()), nullptr, 0);
+        if (!count) throw std::runtime_error("Invalid UTF-8 PMX string");
+        wide.resize(count);
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src.data(), static_cast<int>(src.size()), wide.data(), count);
+    } else throw std::runtime_error("Unsupported PMX encoding");
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+    if (!count) throw std::runtime_error("Invalid PMX Unicode string");
+    std::string result(count, '\0');
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), static_cast<int>(wide.size()), result.data(), count, nullptr, nullptr);
+    if (result.find('\0') != std::string::npos) throw std::runtime_error("PMX string contains NUL");
+    return result;
 }
 #elif defined(KS_STR_ENCODING_NONE)
 std::string kaitai::kstream::bytes_to_str(std::string src, std::string src_enc) {

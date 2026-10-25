@@ -2,6 +2,14 @@
 
 #include "mmd_pmx.h"
 #include "kaitai/exceptions.h"
+#include <stdexcept>
+
+namespace {
+void bounded_count(uint64_t value, uint64_t maximum, kaitai::kstream* stream) {
+    if (value > maximum || value > stream->size() - stream->pos())
+        throw std::runtime_error("PMX count exceeds file or real-time import limits");
+}
+}
 
 mmd_pmx_t::mmd_pmx_t(kaitai::kstream* p__io, kaitai::kstruct* p__parent, mmd_pmx_t* p__root) : kaitai::kstruct(p__io) {
     m__parent = p__parent;
@@ -22,6 +30,7 @@ mmd_pmx_t::mmd_pmx_t(kaitai::kstream* p__io, kaitai::kstruct* p__parent, mmd_pmx
 void mmd_pmx_t::_read() {
     m_header = std::unique_ptr<header_t>(new header_t(m__io, this, m__root));
     m_vertex_count = m__io->read_u4le();
+    bounded_count(m_vertex_count, 500000, m__io);
     int l_vertices = vertex_count();
     m_vertices = std::unique_ptr<std::vector<std::unique_ptr<vertex_t>>>(new std::vector<std::unique_ptr<vertex_t>>());
     m_vertices->reserve(l_vertices);
@@ -29,6 +38,8 @@ void mmd_pmx_t::_read() {
         m_vertices->push_back(std::move(std::unique_ptr<vertex_t>(new vertex_t(m__io, this, m__root))));
     }
     m_face_vertex_count = m__io->read_u4le();
+    bounded_count(m_face_vertex_count, 3000000, m__io);
+    if (m_face_vertex_count % 3) throw std::runtime_error("Invalid PMX triangle count");
     int l_faces = (face_vertex_count() / 3);
     m_faces = std::unique_ptr<std::vector<std::unique_ptr<face_t>>>(new std::vector<std::unique_ptr<face_t>>());
     m_faces->reserve(l_faces);
@@ -36,6 +47,7 @@ void mmd_pmx_t::_read() {
         m_faces->push_back(std::move(std::unique_ptr<face_t>(new face_t(m__io, this, m__root))));
     }
     m_texture_count = m__io->read_u4le();
+    bounded_count(m_texture_count, 4096, m__io);
     int l_textures = texture_count();
     m_textures = std::unique_ptr<std::vector<std::unique_ptr<texture_t>>>(new std::vector<std::unique_ptr<texture_t>>());
     m_textures->reserve(l_textures);
@@ -43,6 +55,7 @@ void mmd_pmx_t::_read() {
         m_textures->push_back(std::move(std::unique_ptr<texture_t>(new texture_t(m__io, this, m__root))));
     }
     m_material_count = m__io->read_u4le();
+    bounded_count(m_material_count, 2048, m__io);
     int l_materials = material_count();
     m_materials = std::unique_ptr<std::vector<std::unique_ptr<material_t>>>(new std::vector<std::unique_ptr<material_t>>());
     m_materials->reserve(l_materials);
@@ -50,6 +63,7 @@ void mmd_pmx_t::_read() {
         m_materials->push_back(std::move(std::unique_ptr<material_t>(new material_t(m__io, this, m__root))));
     }
     m_bone_count = m__io->read_u4le();
+    bounded_count(m_bone_count, 4096, m__io);
     int l_bones = bone_count();
     m_bones = std::unique_ptr<std::vector<std::unique_ptr<bone_t>>>(new std::vector<std::unique_ptr<bone_t>>());
     m_bones->reserve(l_bones);
@@ -57,6 +71,7 @@ void mmd_pmx_t::_read() {
         m_bones->push_back(std::move(std::unique_ptr<bone_t>(new bone_t(m__io, this, m__root))));
     }
     m_morph_count = m__io->read_u4le();
+    bounded_count(m_morph_count, 1024, m__io);
     int l_morphs = morph_count();
     m_morphs = std::unique_ptr<std::vector<std::unique_ptr<morph_t>>>(new std::vector<std::unique_ptr<morph_t>>());
     m_morphs->reserve(l_morphs);
@@ -64,6 +79,7 @@ void mmd_pmx_t::_read() {
         m_morphs->push_back(std::move(std::unique_ptr<morph_t>(new morph_t(m__io, this, m__root))));
     }
     m_frame_count = m__io->read_u4le();
+    bounded_count(m_frame_count, 4096, m__io);
     int l_frames = frame_count();
     m_frames = std::unique_ptr<std::vector<std::unique_ptr<frame_t>>>(new std::vector<std::unique_ptr<frame_t>>());
     m_frames->reserve(l_frames);
@@ -71,6 +87,7 @@ void mmd_pmx_t::_read() {
         m_frames->push_back(std::move(std::unique_ptr<frame_t>(new frame_t(m__io, this, m__root))));
     }
     m_rigid_body_count = m__io->read_u4le();
+    bounded_count(m_rigid_body_count, 2048, m__io);
     int l_rigid_bodies = rigid_body_count();
     m_rigid_bodies = std::unique_ptr<std::vector<std::unique_ptr<rigid_body_t>>>(new std::vector<std::unique_ptr<rigid_body_t>>());
     m_rigid_bodies->reserve(l_rigid_bodies);
@@ -78,12 +95,17 @@ void mmd_pmx_t::_read() {
         m_rigid_bodies->push_back(std::move(std::unique_ptr<rigid_body_t>(new rigid_body_t(m__io, this, m__root))));
     }
     m_joint_count = m__io->read_u4le();
+    bounded_count(m_joint_count, 4096, m__io);
     int l_joints = joint_count();
     m_joints = std::unique_ptr<std::vector<std::unique_ptr<joint_t>>>(new std::vector<std::unique_ptr<joint_t>>());
     m_joints->reserve(l_joints);
     for (int i = 0; i < l_joints; i++) {
         m_joints->push_back(std::move(std::unique_ptr<joint_t>(new joint_t(m__io, this, m__root))));
     }
+    if (header()->version() == 2.1f && !m__io->is_eof()) {
+        if (m__io->read_u4le() != 0) throw std::runtime_error("PMX soft-body meshes are not supported");
+    }
+    if (!m__io->is_eof()) throw std::runtime_error("Unexpected trailing PMX data");
 }
 
 mmd_pmx_t::~mmd_pmx_t() {
@@ -187,6 +209,7 @@ void mmd_pmx_t::vertex_t::_read() {
         m_additional_uvs->push_back(std::move(std::unique_ptr<vec4_t>(new vec4_t(m__io, this, m__root))));
     }
     m_type = static_cast<mmd_pmx_t::bone_type_t>(m__io->read_u1());
+    if (m_type > BONE_TYPE_QDEF) throw std::runtime_error("Invalid PMX skinning type");
     n_skin_weights = true;
     switch (type()) {
     case mmd_pmx_t::BONE_TYPE_BDEF4: {
@@ -590,6 +613,7 @@ void mmd_pmx_t::frame_t::_read() {
     m_english_name = std::unique_ptr<len_string_t>(new len_string_t(m__io, this, m__root));
     m_type = m__io->read_u1();
     m_element_count = m__io->read_u4le();
+    bounded_count(m_element_count, 1000000, m__io);
     int l_elements = element_count();
     m_elements = std::unique_ptr<std::vector<std::unique_ptr<frame_element_t>>>(new std::vector<std::unique_ptr<frame_element_t>>());
     m_elements->reserve(l_elements);
@@ -691,7 +715,9 @@ void mmd_pmx_t::morph_t::_read() {
     m_english_name = std::unique_ptr<len_string_t>(new len_string_t(m__io, this, m__root));
     m_panel = m__io->read_u1();
     m_type = static_cast<mmd_pmx_t::morph_type_t>(m__io->read_u1());
+    if (m_type > MORPH_TYPE_IMPULSE) throw std::runtime_error("Invalid PMX morph type");
     m_element_count = m__io->read_u4le();
+    bounded_count(m_element_count, 1000000, m__io);
     int l_elements = element_count();
     m_elements = std::unique_ptr<std::vector<std::unique_ptr<kaitai::kstruct>>>(new std::vector<std::unique_ptr<kaitai::kstruct>>());
     m_elements->reserve(l_elements);
@@ -833,6 +859,7 @@ void mmd_pmx_t::bone_ik_t::_read() {
     m_iteration = m__io->read_u4le();
     m_max_angle = m__io->read_f4le();
     m_link_count = m__io->read_u4le();
+    bounded_count(m_link_count, 4096, m__io);
     int l_links = link_count();
     m_links = std::unique_ptr<std::vector<std::unique_ptr<bone_ik_link_t>>>(new std::vector<std::unique_ptr<bone_ik_link_t>>());
     m_links->reserve(l_links);
@@ -914,7 +941,7 @@ mmd_pmx_t::header_t::header_t(kaitai::kstream* p__io, mmd_pmx_t* p__parent, mmd_
 void mmd_pmx_t::header_t::_read() {
     m_magic = m__io->read_bytes(4);
     if (!(magic() == std::string("\x50\x4D\x58\x20", 4))) {
-        return;
+        throw std::runtime_error("Not a PMX model");
     }
     m_version = m__io->read_f4le();
     m_header_size = m__io->read_u1();
@@ -926,6 +953,10 @@ void mmd_pmx_t::header_t::_read() {
     m_bone_index_size = m__io->read_u1();
     m_morph_index_size = m__io->read_u1();
     m_rigid_body_index_size = m__io->read_u1();
+    if ((m_version != 2.0f && m_version != 2.1f) || m_header_size != 8 || m_encoding > 1 || m_additional_uv_count > 4)
+        throw std::runtime_error("Unsupported PMX header");
+    for (auto width : {m_vertex_index_size, m_texture_index_size, m_material_index_size, m_bone_index_size, m_morph_index_size, m_rigid_body_index_size})
+        if (width != 1 && width != 2 && width != 4) throw std::runtime_error("Invalid PMX index width");
     m_model_name = std::unique_ptr<len_string_t>(new len_string_t(m__io, this, m__root));
     m_english_model_name = std::unique_ptr<len_string_t>(new len_string_t(m__io, this, m__root));
     m_comment = std::unique_ptr<len_string_t>(new len_string_t(m__io, this, m__root));
@@ -1169,7 +1200,10 @@ mmd_pmx_t::len_string_t::len_string_t(kaitai::kstream* p__io, kaitai::kstruct* p
 
 void mmd_pmx_t::len_string_t::_read() {
     m_length = m__io->read_u4le();
-    m_value = kaitai::kstream::bytes_to_str(m__io->read_bytes(length()), std::string("UTF-16LE"));
+    if (m_length > 4 * 1024 * 1024) throw std::runtime_error("PMX string is too large");
+    auto* header = dynamic_cast<header_t*>(m__parent);
+    if (!header) header = _root()->header();
+    m_value = kaitai::kstream::bytes_to_str(m__io->read_bytes(length()), header->encoding() == 0 ? "UTF-16LE" : "UTF-8");
 }
 
 mmd_pmx_t::len_string_t::~len_string_t() {
