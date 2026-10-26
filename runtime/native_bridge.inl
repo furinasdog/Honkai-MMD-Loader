@@ -175,7 +175,20 @@ struct NativePmx {
         std::vector<Value> textures, bones, names, materials, bodies, joints, surfaces;
         for (const auto& texture : *model.textures()) textures.push_back(Value::text(texture->name()->value()));
         for (uint32_t index = 0; index < bone_count; ++index) {
-            bones.push_back(Value::dictionary({{"name", Value::text(bone_names[index])}, {"parent", Value::integer(parents[index])}, {"position", pmx_numbers(position(model.bones()->at(index)->position()))}}));
+            auto* bone = model.bones()->at(index).get();
+            auto origin = position(bone->position());
+            PmxV3 tail{};
+            if (bone->indexed_tail_position()) {
+                int target = pmx_index(bone->connect_index());
+                if (target >= static_cast<int>(bone_count)) throw std::runtime_error("Invalid PMX bone tail index");
+                if (target >= 0) {
+                    auto endpoint = position(model.bones()->at(target)->position());
+                    for (int axis = 0; axis < 3; ++axis) tail[axis] = endpoint[axis] - origin[axis];
+                }
+            } else tail = delta(bone->offset_position());
+            for (float coordinate : tail) if (!std::isfinite(coordinate)) throw std::runtime_error("Invalid PMX bone tail offset");
+            bones.push_back(Value::dictionary({{"name", Value::text(bone_names[index])}, {"parent", Value::integer(parents[index])},
+                {"position", pmx_numbers(origin)}, {"tail_offset", pmx_numbers(tail)}}));
             names.push_back(Value::text(bone_names[index]));
         }
         uint32_t first_face = 0;

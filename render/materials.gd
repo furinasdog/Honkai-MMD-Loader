@@ -105,7 +105,7 @@ func update_head(skeleton: Skeleton3D) -> void:
 func set_shadow_threshold(value: float) -> void:
 	for material in materials:
 		var kind: int = material.get_shader_parameter("category")
-		var offset := -0.06 if kind == CATEGORY.hair else 0.0
+		var offset := -0.08 if kind == CATEGORY.hair else 0.0
 		material.set_shader_parameter("shadow_threshold", clampf(value + offset, -0.5, 0.7))
 
 
@@ -166,32 +166,32 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 	if transparent:
 		material.render_priority = 1
 	material.set_shader_parameter("texture_albedo", texture)
-	material.set_shader_parameter("base_color", Color(rgba[0], rgba[1], rgba[2], rgba[3]))
+	# PMX diffuse and the baseline ramp are linear multipliers; Godot converts Color uniforms from sRGB.
+	material.set_shader_parameter("base_color", Color(rgba[0], rgba[1], rgba[2], rgba[3]).linear_to_srgb())
 	material.set_shader_parameter("category", CATEGORY[kind])
 	material.set_shader_parameter("face_half_width", head.get("half_width", 0.0817))
 	material.set_shader_parameter("nose_height", head.get("nose_height", 0.02770555))
 	material.set_shader_parameter("face_bottom", head.get("face_bottom", -0.06))
 	material.set_shader_parameter("face_top", head.get("face_top", 0.12))
-	var shadow := Color(0.70, 0.65, 0.82)
+	var shadow := Color(0.54, 0.51, 0.70)
 	var ink := Color(0.15, 0.10, 0.23)
 	var gain := Vector3.ONE
 	if kind in ["face", "skin"]:
-		shadow = Color(0.92, 0.82, 0.79)
+		shadow = Color(0.88, 0.49, 0.46)
 		ink = Color(0.46, 0.20, 0.17)
 	elif kind == "hair":
-		shadow = Color(0.80, 0.56, 0.66)
+		shadow = Color(0.61, 0.32, 0.42)
 		ink = Color(0.44, 0.25, 0.34)
 		material.set_shader_parameter("specular_strength", 0.06)
-		material.set_shader_parameter("shadow_threshold", 0.06)
+		material.set_shader_parameter("shadow_threshold", 0.22)
 	elif kind == "metal":
-		shadow = Color(0.68, 0.59, 0.68)
 		material.set_shader_parameter("specular_strength", 0.25)
 		material.set_shader_parameter("specular_color", Color(1.0, 0.94, 0.80))
 	elif kind == "eye":
 		gain = Vector3.ONE
 		if "眉" in name:
 			material.set_shader_parameter("detail_kind", 1)
-	material.set_shader_parameter("shadow_color", shadow)
+	material.set_shader_parameter("shadow_color", shadow.linear_to_srgb())
 	material.set_shader_parameter("color_gain", gain)
 	materials.append(material)
 	var edge_enabled: bool = bool(entry.get("edge_enabled", kind != "eye" and float(rgba[3]) >= 0.99))

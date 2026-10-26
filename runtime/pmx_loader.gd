@@ -76,6 +76,7 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 	rig.owner = model
 	for bone: Dictionary in data.bones:
 		rig.add_bone(str(bone.name))
+	var tail_offsets := PackedVector3Array()
 	for index in data.bones.size():
 		var bone: Dictionary = data.bones[index]
 		var position := _vector(bone.position)
@@ -84,6 +85,8 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 			rig.set_bone_parent(index, parent)
 			position -= _vector(data.bones[parent].position)
 		rig.set_bone_rest(index, Transform3D(Basis.IDENTITY, position))
+		tail_offsets.append(_vector(bone.get("tail_offset", [0, 0, 0])))
+	rig.set_meta("pmx_tail_offsets", tail_offsets)
 	rig.reset_bone_poses()
 	var skin := rig.create_skin_from_rest_transforms()
 	var mesh := ArrayMesh.new()

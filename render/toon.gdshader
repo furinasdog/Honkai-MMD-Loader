@@ -2,11 +2,11 @@ shader_type spatial;
 render_mode cull_back, diffuse_lambert, specular_disabled, ambient_light_disabled;
 
 uniform sampler2D texture_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform vec4 base_color = vec4(1.0);
+uniform vec4 base_color : source_color = vec4(1.0);
 // FACE, SKIN, HAIR, CLOTH, METAL, EYE.
 uniform int category : hint_range(0, 5) = 3;
-uniform vec4 shadow_color : source_color = vec4(0.69, 0.65, 0.82, 1.0);
-uniform float shadow_threshold : hint_range(-0.5, 0.7, 0.01) = 0.12;
+uniform vec4 shadow_color : source_color = vec4(0.761112, 0.741905, 0.854306, 1.0);
+uniform float shadow_threshold : hint_range(-0.5, 0.7, 0.01) = 0.30;
 uniform float shadow_receive : hint_range(0.0, 1.0) = 1.0;
 uniform float ambient_floor : hint_range(0.0, 1.0) = 0.28;
 uniform float alpha_cutoff : hint_range(0.0, 1.0) = 0.45;
@@ -52,7 +52,7 @@ void fragment() {
 	if (category == 2) {
 		vec3 crown = normalize(vec3(head_position.x, head_position.y * 0.7 - 0.056, head_position.z + 0.01));
 		vec3 crown_view = normalize((VIEW_MATRIX * head_to_world * vec4(crown, 0.0)).xyz);
-		float crown_weight = smoothstep(0.07, 0.14, head_position.y) * 0.65;
+		float crown_weight = smoothstep(0.07, 0.14, head_position.y) * 0.8;
 		NORMAL = normalize(mix(NORMAL, crown_view, crown_weight));
 	}
 	if (detail_kind == 1) {
@@ -69,8 +69,10 @@ void fragment() {
 void light() {
 	if (category != 5) {
 		float n_dot_l = dot(NORMAL, LIGHT);
-		float band = toon_step(shadow_threshold, n_dot_l);
+		float irradiance = max(n_dot_l, 0.0) * mix(1.0, ATTENUATION, shadow_receive);
+		float band = toon_step(shadow_threshold, irradiance);
 		float cast_light = toon_step(0.5, ATTENUATION);
+		float illumination = band;
 		if (category == 0) {
 			vec3 local_light = (world_to_head * INV_VIEW_MATRIX * vec4(LIGHT, 0.0)).xyz;
 			vec2 horizontal = normalize(local_light.xz + vec2(0.0, 0.00001));
@@ -82,8 +84,8 @@ void light() {
 			band = toon_step(0.0, face_score);
 			float forehead = toon_step(mix(face_bottom, face_top, 0.65), head_position.y);
 			cast_light = mix(1.0, cast_light, forehead);
+			illumination = min(band, mix(1.0, cast_light, shadow_receive));
 		}
-		float illumination = min(band, mix(1.0, cast_light, shadow_receive));
 		vec3 tint = mix(shadow_color.rgb, vec3(1.0), illumination);
 		if (LIGHT_IS_DIRECTIONAL) {
 			DIFFUSE_LIGHT += max(tint - shadow_color.rgb * ambient_floor, vec3(0.0)) * LIGHT_COLOR / PI;
