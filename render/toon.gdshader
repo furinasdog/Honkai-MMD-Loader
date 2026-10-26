@@ -5,6 +5,7 @@ uniform sampler2D texture_albedo : source_color, filter_linear_mipmap_anisotropi
 uniform vec4 base_color : source_color = vec4(1.0);
 // FACE, SKIN, HAIR, CLOTH, METAL, EYE.
 uniform int category : hint_range(0, 5) = 3;
+uniform bool shadows_enabled = true;
 uniform vec4 shadow_color : source_color = vec4(0.761112, 0.741905, 0.854306, 1.0);
 uniform float shadow_threshold : hint_range(-0.5, 0.7, 0.01) = 0.30;
 uniform float shadow_receive : hint_range(0.0, 1.0) = 1.0;
@@ -49,25 +50,26 @@ void fragment() {
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
-	if (category == 2) {
+	if (shadows_enabled && category == 2) {
 		vec3 crown = normalize(vec3(head_position.x, head_position.y * 0.7 - 0.056, head_position.z + 0.01));
 		vec3 crown_view = normalize((VIEW_MATRIX * head_to_world * vec4(crown, 0.0)).xyz);
 		float crown_weight = smoothstep(0.07, 0.14, head_position.y) * 0.8;
 		NORMAL = normalize(mix(NORMAL, crown_view, crown_weight));
 	}
-	if (detail_kind == 1) {
+	if (shadows_enabled && detail_kind == 1) {
 		ALBEDO = mix(ALBEDO, vec3(0.24, 0.067, 0.05), 0.45);
 	}
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	EMISSION = ALBEDO * shadow_color.rgb * ambient_floor;
-	if (category == 5) {
+	if (!shadows_enabled || category == 5) {
 		EMISSION = ALBEDO;
+	} else {
+		EMISSION = ALBEDO * shadow_color.rgb * ambient_floor;
 	}
 }
 
 void light() {
-	if (category != 5) {
+	if (shadows_enabled && category != 5) {
 		float n_dot_l = dot(NORMAL, LIGHT);
 		float irradiance = max(n_dot_l, 0.0) * mix(1.0, ATTENUATION, shadow_receive);
 		float band = toon_step(shadow_threshold, irradiance);

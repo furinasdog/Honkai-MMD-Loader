@@ -16,6 +16,8 @@ The face shadow is a two-tone field, independent of lip/nose/chin surface normal
 
 Runtime material colors preserve PMX linear diffuse values and the linear toon palette when passed through Godot's Color conversion. Body lighting combines normal visibility and cast-shadow attenuation before one binary ramp. The loader also preserves authored PMX bone tail offsets in `pmx_tail_offsets` skeleton metadata so host retargeters can resolve terminal finger axes without assuming a local Y axis.
 
+`set_shadows_enabled(false)` bypasses computed normal, cast and face-field shadows for every material. Source texture colors, UVs, alpha and outlines remain; newly applied models inherit the current setting. Re-enable it to restore toon lighting.
+
 ## Build and validation
 
 Windows x64, C++17, CMake 3.20+, standard single-precision Godot 4.7. Tested with Visual Studio 2026. GCC/Clang and other platforms have not been validated.

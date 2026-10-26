@@ -7,6 +7,7 @@ const CATEGORY := {"face": 0, "skin": 1, "hair": 2, "cloth": 3, "metal": 4, "eye
 
 var materials: Array[ShaderMaterial] = []
 var outlines: Array[ShaderMaterial] = []
+var shadows_enabled: bool = true
 var _head_bone := "頭"
 var _head_index := -1
 var _head_rest := Transform3D.IDENTITY
@@ -102,6 +103,12 @@ func update_head(skeleton: Skeleton3D) -> void:
 		material.set_shader_parameter("world_to_head", inverse)
 
 
+func set_shadows_enabled(enabled: bool) -> void:
+	shadows_enabled = enabled
+	for material in materials:
+		material.set_shader_parameter("shadows_enabled", enabled)
+
+
 func set_shadow_threshold(value: float) -> void:
 	for material in materials:
 		var kind: int = material.get_shader_parameter("category")
@@ -166,6 +173,7 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 	if transparent:
 		material.render_priority = 1
 	material.set_shader_parameter("texture_albedo", texture)
+	material.set_shader_parameter("shadows_enabled", shadows_enabled)
 	# PMX diffuse and the baseline ramp are linear multipliers; Godot converts Color uniforms from sRGB.
 	material.set_shader_parameter("base_color", Color(rgba[0], rgba[1], rgba[2], rgba[3]).linear_to_srgb())
 	material.set_shader_parameter("category", CATEGORY[kind])
