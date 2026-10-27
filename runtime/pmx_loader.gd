@@ -108,6 +108,8 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 		arrays[Mesh.ARRAY_BONES] = surface[5]
 		arrays[Mesh.ARRAY_WEIGHTS] = surface[6]
 		arrays[Mesh.ARRAY_INDEX] = surface[7]
+		if metadata.materials[surface[0]].category == "face":
+			_mask_face_holes(arrays)
 		var flags := 0
 		for index in surface[9].size():
 			arrays[Mesh.ARRAY_CUSTOM0 + index] = surface[9][index]
@@ -152,8 +154,69 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 		metadata.head.face_bottom = face_min.y - origin.y
 		metadata.head.face_top = face_max.y - origin.y
 	metadata["source_pmx"] = path.trim_prefix(root_path + "/")
+	metadata["face_outline_mask"] = true
 	metadata["archive_sha256"] = archive.get("sha256", "")
 	return {"root": model, "metadata": metadata}
+
+
+static func _mask_face_holes(arrays: Array) -> void:
+	# The inverted hull must not expand the rims of facial openings into the lips or eyes.
+	var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	var bounds := AABB(points[0], Vector3.ZERO)
+	var welded := {}
+	var ids := PackedInt32Array()
+	for point in points:
+		bounds = bounds.expand(point)
+		var key := Vector3i(roundi(point.x * 100000), roundi(point.y * 100000), roundi(point.z * 100000))
+		if not welded.has(key):
+			welded[key] = welded.size()
+		ids.append(welded[key])
+	var edges := {}
+	var positions := {}
+	for i in range(0, indices.size(), 3):
+		for side in 3:
+			var a := ids[indices[i + side]]
+			var b := ids[indices[i + (side + 1) % 3]]
+			var edge := Vector2i(mini(a, b), maxi(a, b))
+			edges[edge] = int(edges.get(edge, 0)) + 1
+			positions[a] = points[indices[i + side]]
+	var boundary := {}
+	for edge: Vector2i in edges:
+		if edges[edge] != 1:
+			continue
+		for pair in [edge, Vector2i(edge.y, edge.x)]:
+			if not boundary.has(pair.x):
+				boundary[pair.x] = []
+			boundary[pair.x].append(pair.y)
+	var visited := {}
+	var masked := {}
+	for start: int in boundary:
+		if visited.has(start):
+			continue
+		var pending := [start]
+		var group := []
+		var region := AABB(positions[start], Vector3.ZERO)
+		while not pending.is_empty():
+			var index: int = pending.pop_back()
+			if visited.has(index):
+				continue
+			visited[index] = true
+			group.append(index)
+			region = region.expand(positions[index])
+			pending.append_array(boundary[index])
+		if region.size.x < bounds.size.x * 0.6 and region.size.y < bounds.size.y * 0.4 and region.get_center().z > bounds.get_center().z:
+			for index: int in group:
+				masked[index] = true
+	var rim := masked.duplicate()
+	for edge: Vector2i in edges:
+		if rim.has(edge.x) or rim.has(edge.y):
+			masked[edge.x] = true
+			masked[edge.y] = true
+	for i in points.size():
+		colors[i].r = 0.0 if masked.has(ids[i]) else 1.0
+	arrays[Mesh.ARRAY_COLOR] = colors
 
 
 static func _vector(value: Array) -> Vector3:

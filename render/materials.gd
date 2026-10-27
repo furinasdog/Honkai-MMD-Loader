@@ -3,7 +3,11 @@ extends RefCounted
 
 const TOON: Shader = preload("res://plugins/honkai_mmd/render/toon.gdshader")
 const OUTLINE: Shader = preload("res://plugins/honkai_mmd/render/outline.gdshader")
+const GENERATED_MAPS = preload("res://plugins/honkai_mmd/render/generated_maps.gd")
+const HAIR_STENCIL: Shader = preload("res://plugins/honkai_mmd/render/hair_stencil.gdshader")
+const EYE_OVERLAY: Shader = preload("res://plugins/honkai_mmd/render/eye_overlay.gdshader")
 const CATEGORY := {"face": 0, "skin": 1, "hair": 2, "cloth": 3, "metal": 4, "eye": 5}
+const MAP_ROLES := {"face_map": "FaceMap · RGBA", "face_sdf": "面部 SDF · 灰度", "light_map": "LightMap · RGBA", "warm_ramp": "暖色 Ramp", "cool_ramp": "冷色 Ramp", "highlight_map": "高光遮罩 · 灰度"}
 
 var materials: Array[ShaderMaterial] = []
 var outlines: Array[ShaderMaterial] = []
@@ -14,18 +18,29 @@ var _head_rest := Transform3D.IDENTITY
 var _head_origin := Transform3D.IDENTITY
 var _shader_variants := {}
 var _edge_weights: bool = false
+var _face_outline_mask: bool = false
 var use_pmx_outline_colors: bool = false
 var _source_outline_colors: Array[Color] = []
 var _game_outline_colors: Array[Color] = []
 var _textures := {}
 var _edge_weight_scale := 1.0
+var enhanced := true
+var eye_transparency := false
+var eye_transparency_strength := 0.3
+var _map_sources: Array[Dictionary] = []
+var _eye_links: Array[Dictionary] = []
+var _eye_overlays: Array[ShaderMaterial] = []
+var material_slots: Array[Dictionary] = []
+var custom_maps := {}
+var map_error := ""
+var _maps_path := ""
 
 
 static func classify_material(name: String) -> String:
 	var value := name.to_lower()
 	if value in ["面", "颜", "顔", "顏"] or _contains(value, ["脸", "臉", "顔", "颜", "顏", "face", "facial"]):
 		return "face"
-	if value in ["目", "口", "舌", "齿", "齒", "歯"] or _contains(value, ["眼", "瞳", "眉", "睫", "白目", "目光", "目影", "口腔", "牙", "歯", "齿", "齒", "eye", "lash", "brow", "teeth"]):
+	if value in ["目", "口", "舌", "齿", "齒", "歯"] or _contains(value, ["眼", "瞳", "眉", "睫", "白目", "目光", "目影", "目星", "口腔", "口舌", "口内", "口中", "牙", "歯", "齿", "齒", "eye", "lash", "brow", "teeth", "mouth", "tongue"]):
 		return "eye"
 	if _contains(value, ["金属", "金屬", "metal"]):
 		return "metal"
@@ -52,6 +67,7 @@ func apply(model_root: Node3D, metadata: Dictionary = {}) -> void:
 		return
 	var parsed: Dictionary = metadata
 	_edge_weights = bool(parsed.get("vertex_edge_weights", false))
+	_face_outline_mask = bool(parsed.get("face_outline_mask", false))
 	_edge_weight_scale = float(parsed.get("vertex_edge_scale", 1.0))
 	_textures.clear()
 	var head: Dictionary = parsed.get("head", {})
@@ -63,7 +79,25 @@ func apply(model_root: Node3D, metadata: Dictionary = {}) -> void:
 	outlines.clear()
 	_source_outline_colors.clear()
 	_game_outline_colors.clear()
+	_map_sources.clear()
+	_eye_links.clear()
+	_eye_overlays.clear()
+	material_slots.clear()
+	custom_maps.clear()
+	var model_key := (str(parsed.get("archive_sha256", "")) + "|" + str(parsed.get("source_pmx", parsed.get("model_file", "")))).sha256_text()
+	_maps_path = "user://model_rendering/" + model_key + ".json"
+	var saved_file := FileAccess.open(_maps_path, FileAccess.READ)
+	if saved_file != null and saved_file.get_length() <= 1024 * 1024:
+		var saved = JSON.parse_string(saved_file.get_as_text())
+		if saved is Dictionary:
+			custom_maps = saved
 	_head_index = -1
+	var origin := Vector3.ZERO
+	var skeletons := model_root.find_children("*", "Skeleton3D", true, false)
+	if not skeletons.is_empty():
+		var index: int = skeletons[0].find_bone(_head_bone)
+		if index >= 0:
+			origin = skeletons[0].get_bone_global_rest(index).origin
 	for node in model_root.find_children("*", "MeshInstance3D", true, false):
 		var instance := node as MeshInstance3D
 		if instance.mesh == null:
@@ -76,7 +110,12 @@ func apply(model_root: Node3D, metadata: Dictionary = {}) -> void:
 			entry.category = classify_material(str(entry.get("source_name", entry.name)))
 			var material := _make_material(entry, head, previous)
 			instance.set_surface_override_material(surface, material)
-	var skeletons := model_root.find_children("*", "Skeleton3D", true, false)
+			material_slots.append({"id": entry.name, "name": str(entry.get("source_name", entry.name)), "kind": entry.category, "material": material})
+			if entry.category in ["face", "hair"]:
+				_map_sources.append({"material": material, "arrays": instance.mesh.surface_get_arrays(surface), "kind": entry.category, "head": head, "origin": origin})
+	_apply_custom_maps()
+	set_enhanced(enhanced)
+	set_eye_transparency(eye_transparency, eye_transparency_strength)
 	if not skeletons.is_empty():
 		update_head(skeletons[0] as Skeleton3D)
 
@@ -101,6 +140,114 @@ func update_head(skeleton: Skeleton3D) -> void:
 	for material in materials:
 		material.set_shader_parameter("head_to_world", head_world)
 		material.set_shader_parameter("world_to_head", inverse)
+	for material in _eye_overlays:
+		material.set_shader_parameter("head_to_world", head_world)
+
+
+func set_enhanced(enabled: bool) -> void:
+	enhanced = enabled
+	for material in materials:
+		material.set_shader_parameter("enhanced", enabled)
+	if not enabled:
+		return
+	for source in _map_sources:
+		if source.kind == "face" and source.material.get_shader_parameter("has_face_map"):
+			continue
+		if source.kind == "hair" and (source.material.get_shader_parameter("has_light_map") or source.material.get_shader_parameter("has_highlight_map")):
+			continue
+		if source.has("generated"):
+			continue
+		var texture: Texture2D = GENERATED_MAPS.build(source.arrays, source.kind, source.head, source.origin)
+		source["generated"] = true
+		if texture != null:
+			source.material.set_shader_parameter("generated_map", texture)
+			source.material.set_shader_parameter("has_generated_map", true)
+
+
+func set_eye_transparency(enabled: bool, strength: float = 0.3) -> void:
+	eye_transparency = enabled
+	eye_transparency_strength = clampf(strength, 0.0, 1.0)
+	for link in _eye_links:
+		link.tail.next_pass = link.pass if enabled else null
+	for material in _eye_overlays:
+		material.set_shader_parameter("strength", eye_transparency_strength)
+
+
+func import_custom_map(id: String, role: String, path: String) -> bool:
+	map_error = ""
+	if not MAP_ROLES.has(role) or not material_slots.any(func(slot): return slot.id == id):
+		map_error = "请先选择模型材质和贴图用途。"
+		return false
+	var input := FileAccess.open(path, FileAccess.READ)
+	if input == null or input.get_length() > 64 * 1024 * 1024:
+		map_error = "贴图不存在或超过 64 MB。"
+		return false
+	var image := Image.new()
+	if image.load(path) != OK or image.get_width() > 8192 or image.get_height() > 8192:
+		map_error = "无法读取贴图，最大支持 8192 × 8192。"
+		return false
+	image.convert(Image.FORMAT_RGBA8)
+	var hash := HashingContext.new()
+	hash.start(HashingContext.HASH_SHA256)
+	hash.update(("%dx%d" % [image.get_width(), image.get_height()]).to_utf8_buffer())
+	hash.update(image.get_data())
+	var cache := "user://render_maps/imported/" + hash.finish().hex_encode() + ".png"
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(cache.get_base_dir())) != OK or image.save_png(cache) != OK:
+		map_error = "无法保存贴图缓存。"
+		return false
+	if not custom_maps.get(id) is Dictionary:
+		custom_maps[id] = {}
+	custom_maps[id][role] = {"path": cache, "name": path.get_file()}
+	if not _save_custom_maps():
+		return false
+	_apply_custom_maps()
+	set_enhanced(enhanced)
+	return true
+
+
+func remove_custom_map(id: String, role: String) -> bool:
+	if custom_maps.get(id) is Dictionary:
+		custom_maps[id].erase(role)
+	if not _save_custom_maps():
+		return false
+	_apply_custom_maps()
+	set_enhanced(enhanced)
+	return true
+
+
+func _save_custom_maps() -> bool:
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_maps_path.get_base_dir())) == OK:
+		var file := FileAccess.open(_maps_path, FileAccess.WRITE)
+		if file != null:
+			file.store_string(JSON.stringify(custom_maps))
+			return true
+	map_error = "无法保存模型贴图设置。"
+	return false
+
+
+func _apply_custom_maps() -> void:
+	var loaded := {}
+	for slot in material_slots:
+		var maps = custom_maps.get(slot.id, {})
+		if not maps is Dictionary:
+			maps = {}
+		for role: String in MAP_ROLES:
+			slot.material.set_shader_parameter("has_" + role, false)
+			slot.material.set_shader_parameter(role, null)
+			var entry = maps.get(role, {})
+			if not entry is Dictionary:
+				continue
+			var path := str(entry.get("path", ""))
+			if not path.begins_with("user://render_maps/imported/") or ".." in path or not FileAccess.file_exists(path):
+				continue
+			if not loaded.has(path):
+				var image := Image.new()
+				if image.load(path) != OK or image.get_width() > 8192 or image.get_height() > 8192:
+					continue
+				image.generate_mipmaps()
+				loaded[path] = ImageTexture.create_from_image(image)
+			slot.material.set_shader_parameter(role, loaded[path])
+			slot.material.set_shader_parameter("has_" + role, true)
 
 
 func set_shadows_enabled(enabled: bool) -> void:
@@ -220,9 +367,26 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		outline.set_shader_parameter("outline_color", original if use_pmx_outline_colors else game_ink)
 		outline.set_shader_parameter("outline_world_width", 0.0018 * maxf(0.0, float(entry.get("edge_size", 1.0))))
 		outline.set_shader_parameter("use_mmd_edge_weights", _edge_weights)
+		outline.set_shader_parameter("use_face_outline_mask", _face_outline_mask and kind == "face")
 		outline.set_shader_parameter("mmd_edge_scale_max", _edge_weight_scale)
 		material.next_pass = outline
 		outlines.append(outline)
+	var tail: Material = material.next_pass if material.next_pass != null else material
+	if kind == "hair":
+		var marker := ShaderMaterial.new()
+		marker.shader = HAIR_STENCIL
+		marker.render_priority = 100
+		marker.set_shader_parameter("texture_albedo", texture)
+		marker.set_shader_parameter("base_alpha", float(rgba[3]))
+		_eye_links.append({"tail": tail, "pass": marker})
+	elif kind == "eye" and not _contains(name.to_lower(), ["白", "white", "影", "口", "舌", "齿", "歯", "齒", "teeth", "mouth"]) and (name == "目" or _contains(name.to_lower(), ["眉", "睫", "瞳", "eye", "brow", "lash"])):
+		var overlay := ShaderMaterial.new()
+		overlay.shader = EYE_OVERLAY
+		overlay.render_priority = 101
+		overlay.set_shader_parameter("texture_albedo", texture)
+		overlay.set_shader_parameter("base_color", material.get_shader_parameter("base_color"))
+		_eye_links.append({"tail": tail, "pass": overlay})
+		_eye_overlays.append(overlay)
 	return material
 
 

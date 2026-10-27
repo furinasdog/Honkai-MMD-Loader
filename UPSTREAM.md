@@ -23,4 +23,7 @@ not implemented. Existing rigid bodies and spring 6DOF joints are exported to
 the host's Jolt integration. Nonzero PMX soft bodies are rejected explicitly.
 Sphere/toon texture references are preserved but the custom renderer uses its
 own lighting rather than reproducing authored MME effects. An authored face
-SDF is not required: a head-local face field is used as fallback.
+SDF is not required: enhanced mode generates geometry/UV-based angular threshold,
+nose and highlight helpers; the basic head-local field remains an opt-out
+fallback. User FaceMap/SDF/LightMap/Ramp/highlight inputs and hair-only stencil
+eye overlays are provided by the independent Godot runtime renderer.
