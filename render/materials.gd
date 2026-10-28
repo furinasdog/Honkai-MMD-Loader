@@ -195,10 +195,12 @@ func import_custom_map(id: String, role: String, path: String) -> bool:
 	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(cache.get_base_dir())) != OK or image.save_png(cache) != OK:
 		map_error = "无法保存贴图缓存。"
 		return false
+	var previous := custom_maps.duplicate(true)
 	if not custom_maps.get(id) is Dictionary:
 		custom_maps[id] = {}
 	custom_maps[id][role] = {"path": cache, "name": path.get_file()}
 	if not _save_custom_maps():
+		custom_maps = previous
 		return false
 	_apply_custom_maps()
 	set_enhanced(enhanced)
@@ -206,9 +208,12 @@ func import_custom_map(id: String, role: String, path: String) -> bool:
 
 
 func remove_custom_map(id: String, role: String) -> bool:
+	map_error = ""
+	var previous := custom_maps.duplicate(true)
 	if custom_maps.get(id) is Dictionary:
 		custom_maps[id].erase(role)
 	if not _save_custom_maps():
+		custom_maps = previous
 		return false
 	_apply_custom_maps()
 	set_enhanced(enhanced)
@@ -217,10 +222,15 @@ func remove_custom_map(id: String, role: String) -> bool:
 
 func _save_custom_maps() -> bool:
 	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_maps_path.get_base_dir())) == OK:
-		var file := FileAccess.open(_maps_path, FileAccess.WRITE)
+		var temporary := _maps_path + ".tmp"
+		var file := FileAccess.open(temporary, FileAccess.WRITE)
 		if file != null:
 			file.store_string(JSON.stringify(custom_maps))
-			return true
+			file.flush()
+			var result := file.get_error()
+			file.close()
+			if result == OK and DirAccess.rename_absolute(ProjectSettings.globalize_path(temporary), ProjectSettings.globalize_path(_maps_path)) == OK:
+				return true
 	map_error = "无法保存模型贴图设置。"
 	return false
 
