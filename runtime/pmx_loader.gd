@@ -48,6 +48,7 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 		entry.category = HonkaiMMDMaterials.classify_material(str(entry.source_name))
 		entry.texture = ""
 		entry.sphere_texture = ""
+		entry.toon_texture = ""
 		var index := int(entry.texture_index)
 		if index >= 0:
 			if textures[index] == null and float(entry.base_color[3]) > 0.001:
@@ -55,8 +56,11 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 				return {}
 			entry.texture = texture_paths[index]
 		var sphere_index := int(entry.sphere_texture_index)
-		if sphere_index >= 0:
+		if sphere_index >= 0 and textures[sphere_index] != null:
 			entry.sphere_texture = texture_paths[sphere_index]
+		var toon_index := int(entry.get("toon_index", -1))
+		if not entry.get("toon_shared", false) and toon_index >= 0 and textures[toon_index] != null:
+			entry.toon_texture = texture_paths[toon_index]
 		var material := StandardMaterial3D.new()
 		material.resource_name = str(entry.name)
 		var rgba: Array = entry.base_color
@@ -153,10 +157,40 @@ func load_file(path: String, archive: Dictionary = {}) -> Dictionary:
 		metadata.head.nose_height = (face_min.y + face_max.y) * 0.5 - origin.y
 		metadata.head.face_bottom = face_min.y - origin.y
 		metadata.head.face_top = face_max.y - origin.y
+	_set_eye_landmarks(rig, head, metadata.head)
 	metadata["source_pmx"] = path.trim_prefix(root_path + "/")
 	metadata["face_outline_mask"] = true
 	metadata["archive_sha256"] = archive.get("sha256", "")
 	return {"root": model, "metadata": metadata}
+
+
+static func _set_eye_landmarks(rig: Skeleton3D, head: int, bounds: Dictionary) -> void:
+	var bottom := float(bounds.get("face_bottom", -0.06))
+	var top := float(bounds.get("face_top", 0.12))
+	bounds.eye_height = lerpf(bottom, top, 0.55)
+	bounds.eye_half_width = float(bounds.get("half_width", 0.08)) * 0.45
+	bounds.eye_landmarks_from_bones = false
+	if head < 0:
+		return
+	# Face bounds and generated maps use unrolled model axes, not the head bone's rest roll.
+	var origin := rig.get_bone_global_rest(head).origin
+	for pair in [["左目", "右目"], ["左眼", "右眼"], ["LeftEye", "RightEye"], ["left_eye", "right_eye"], ["Eye_L", "Eye_R"], ["eye_L", "eye_R"], ["J_Bip_L_Eye", "J_Bip_R_Eye"]]:
+		var left := rig.find_bone(pair[0])
+		var right := rig.find_bone(pair[1])
+		if left < 0 or right < 0:
+			continue
+		var left_point := rig.get_bone_global_rest(left).origin - origin
+		var right_point := rig.get_bone_global_rest(right).origin - origin
+		var half_width := absf(left_point.x - right_point.x) * 0.5
+		if not left_point.is_finite() or not right_point.is_finite() or half_width < 0.0001:
+			continue
+		var face_width := float(bounds.get("half_width", 0.08))
+		if left_point.y < bottom or left_point.y > top or right_point.y < bottom or right_point.y > top or absf(left_point.x) > face_width or absf(right_point.x) > face_width:
+			continue
+		bounds.eye_height = (left_point.y + right_point.y) * 0.5
+		bounds.eye_half_width = half_width
+		bounds.eye_landmarks_from_bones = true
+		return
 
 
 static func _mask_face_holes(arrays: Array) -> void:

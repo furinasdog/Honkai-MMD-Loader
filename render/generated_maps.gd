@@ -1,7 +1,7 @@
 extends RefCounted
 
 const RESOLUTION := 128
-const VERSION := "geometry-lighting-v4"
+const VERSION := "geometry-lighting-v7"
 
 
 static func build(arrays: Array, kind: String, head: Dictionary, head_origin: Vector3) -> Texture2D:
@@ -59,6 +59,8 @@ static func build(arrays: Array, kind: String, head: Dictionary, head_origin: Ve
 			var highlight := exp(-pow((crown - 0.79) / 0.17, 2.0))
 			values.append(Color(threshold, 1.0 - threshold, highlight, 1.0))
 		image = _rasterize(uv, arrays[Mesh.ARRAY_INDEX], values, points, nose, height, kind)
+		if image == null:
+			return null
 		if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(path.get_base_dir())) == OK:
 			image.save_png(path)
 	image.generate_mipmaps()
@@ -68,6 +70,7 @@ static func build(arrays: Array, kind: String, head: Dictionary, head_origin: Ve
 static func _rasterize(uv: PackedVector2Array, indices: PackedInt32Array, values: PackedColorArray, points: PackedVector3Array, nose: Vector3, height: float, kind: String) -> Image:
 	var image := Image.create(RESOLUTION, RESOLUTION, false, Image.FORMAT_RGBA8)
 	image.fill(Color(0.5, 0.5, 0.0, 0.0))
+	var covered := false
 	for triangle in range(0, indices.size(), 3):
 		var a := uv[indices[triangle]] * (RESOLUTION - 1)
 		var b := uv[indices[triangle + 1]] * (RESOLUTION - 1)
@@ -99,4 +102,5 @@ static func _rasterize(uv: PackedVector2Array, indices: PackedInt32Array, values
 				else:
 					color.b = maxf(color.b, image.get_pixel(x,y).b)
 				image.set_pixel(x, y, color)
-	return image
+				covered = true
+	return image if covered else null

@@ -18,7 +18,12 @@ Value pmx_numbers(PmxV4 value) {
     return Value::array({Value::number(value[0]), Value::number(value[1]), Value::number(value[2]), Value::number(value[3])});
 }
 PmxV3 pmx_vec(Pmx::vec3_t* value) { return {value->x(), value->y(), value->z()}; }
+PmxV3 pmx_color(Pmx::color3_t* value) { return {value->r(), value->g(), value->b()}; }
 PmxV4 pmx_color(Pmx::color4_t* value) { return {value->r(), value->g(), value->b(), value->a()}; }
+int pmx_toon_index(Pmx::material_t* material) {
+    if (material->is_common_toon() == 1) return static_cast<Pmx::common_toon_index_t*>(material->toon_index())->value();
+    return pmx_index(static_cast<Pmx::sized_index_t*>(material->toon_index()));
+}
 Value pmx_vectors(const std::vector<PmxV3>& data) {
     return Value::packed(GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR3_ARRAY, gdabi::packed_vectors_size, data, api.vectors);
 }
@@ -92,6 +97,12 @@ struct NativePmx {
                 if (index >= static_cast<int>(model.texture_count())) throw std::runtime_error("PMX texture index is out of range");
             }
             if (material->is_common_toon() > 1) throw std::runtime_error("Invalid PMX toon mode");
+            int toon = pmx_toon_index(material.get());
+            if (material->is_common_toon() ? toon > 9 : toon >= static_cast<int>(model.texture_count())) throw std::runtime_error("PMX toon index is out of range");
+            if (static_cast<int>(material->sphere_op_mode()) > 3) throw std::runtime_error("Invalid PMX sphere mode");
+            for (auto color : {pmx_color(material->specular()), pmx_color(material->ambient())})
+                for (float component : color) if (!std::isfinite(component)) throw std::runtime_error("Invalid PMX material color");
+            if (!std::isfinite(material->shininess())) throw std::runtime_error("Invalid PMX material shininess");
         }
         if (material_indices != model.face_vertex_count()) throw std::runtime_error("PMX material ranges do not cover the mesh");
         if (!(highest - lowest > 0.01f) || highest - lowest > 10000.f) throw std::runtime_error("PMX has no visible model or invalid dimensions");
@@ -199,6 +210,8 @@ struct NativePmx {
             materials.push_back(Value::dictionary({{"name", Value::text(id)}, {"source_name", Value::text(material->name()->value())},
                 {"source_index", Value::integer(material_index)}, {"base_color", pmx_numbers(pmx_color(material->diffuse()))},
                 {"texture_index", Value::integer(pmx_index(material->texture_index()))}, {"sphere_texture_index", Value::integer(pmx_index(material->sphere_texture_index()))},
+                {"toon_shared", Value::boolean(material->is_common_toon() == 1)}, {"toon_index", Value::integer(pmx_toon_index(material))},
+                {"specular", pmx_numbers(pmx_color(material->specular()))}, {"shininess", Value::number(material->shininess())}, {"ambient", pmx_numbers(pmx_color(material->ambient()))},
                 {"sphere_mode", Value::integer(material->sphere_op_mode())}, {"edge_enabled", Value::boolean(material->outlined())},
                 {"edge_color", pmx_numbers(pmx_color(material->edge_color()))}, {"edge_size", Value::number(material->edge_size())},
                 {"double_sided", Value::boolean(material->no_cull())}, {"receive_shadow", Value::boolean(material->receive_shadow())},

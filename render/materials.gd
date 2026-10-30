@@ -7,6 +7,8 @@ const GENERATED_MAPS = preload("res://plugins/honkai_mmd/render/generated_maps.g
 const HAIR_STENCIL: Shader = preload("res://plugins/honkai_mmd/render/hair_stencil.gdshader")
 const EYE_OVERLAY: Shader = preload("res://plugins/honkai_mmd/render/eye_overlay.gdshader")
 const CATEGORY := {"face": 0, "skin": 1, "hair": 2, "cloth": 3, "metal": 4, "eye": 5}
+const BRIGHT_GAINS := [Vector3(1.03, 1.11, 1.07), Vector3(1.03, 1.11, 1.07), Vector3(1.10, 1.06, 1.02), Vector3(1.06, 1.04, 1.02), Vector3.ONE, Vector3.ONE]
+const SHADOW_TINTS := [Color(0.94, 0.61, 0.57), Color(0.94, 0.61, 0.57), Color(0.67, 0.33, 0.41), Color(0.66, 0.27, 0.44), Color(0.66, 0.65, 0.80), Color.WHITE]
 const MAP_ROLES := {"face_map": "FaceMap · RGBA", "face_sdf": "面部 SDF · 灰度", "light_map": "LightMap · RGBA", "warm_ramp": "暖色 Ramp", "cool_ramp": "冷色 Ramp", "highlight_map": "高光遮罩 · 灰度"}
 
 var materials: Array[ShaderMaterial] = []
@@ -17,6 +19,7 @@ var _head_index := -1
 var _head_rest := Transform3D.IDENTITY
 var _head_origin := Transform3D.IDENTITY
 var _shader_variants := {}
+var _mesh_instances: Array[MeshInstance3D] = []
 var _edge_weights: bool = false
 var _face_outline_mask: bool = false
 var use_pmx_outline_colors: bool = false
@@ -42,7 +45,7 @@ static func classify_material(name: String) -> String:
 		return "face"
 	if value in ["目", "口", "舌", "齿", "齒", "歯"] or _contains(value, ["眼", "瞳", "眉", "睫", "白目", "目光", "目影", "目星", "口腔", "口舌", "口内", "口中", "牙", "歯", "齿", "齒", "eye", "lash", "brow", "teeth", "mouth", "tongue"]):
 		return "eye"
-	if _contains(value, ["金属", "金屬", "metal"]):
+	if _contains(value, ["金属", "金屬", "铁", "鉄", "钢", "鋼", "metal", "iron", "steel", "金具"]):
 		return "metal"
 	if _contains(value, ["饰", "飾", "リボン", "ribbon", "bow"]):
 		return "cloth"
@@ -92,6 +95,7 @@ func apply(model_root: Node3D, metadata: Dictionary = {}) -> void:
 		if saved is Dictionary:
 			custom_maps = saved
 	_head_index = -1
+	_mesh_instances.clear()
 	var origin := Vector3.ZERO
 	var skeletons := model_root.find_children("*", "Skeleton3D", true, false)
 	if not skeletons.is_empty():
@@ -102,12 +106,14 @@ func apply(model_root: Node3D, metadata: Dictionary = {}) -> void:
 		var instance := node as MeshInstance3D
 		if instance.mesh == null:
 			continue
+		_mesh_instances.append(instance)
 		for surface in instance.mesh.get_surface_count():
 			var previous := instance.mesh.surface_get_material(surface)
 			var surface_name: String = previous.resource_name if previous != null else str(surface)
 			var entry: Dictionary = by_name.get(surface_name, {"name": surface_name, "category": "cloth", "texture": "", "base_color": [1.0, 1.0, 1.0, 1.0]})
 			entry = entry.duplicate()
 			entry.category = classify_material(str(entry.get("source_name", entry.name)))
+			entry["has_sphere_uv1"] = int(parsed.get("additional_uv_channels", 0)) > 0
 			var material := _make_material(entry, head, previous)
 			instance.set_surface_override_material(surface, material)
 			material_slots.append({"id": entry.name, "name": str(entry.get("source_name", entry.name)), "kind": entry.category, "material": material})
@@ -145,9 +151,20 @@ func update_head(skeleton: Skeleton3D) -> void:
 
 
 func set_enhanced(enabled: bool) -> void:
+	var changed := enhanced != enabled
 	enhanced = enabled
 	for material in materials:
 		material.set_shader_parameter("enhanced", enabled)
+		_apply_palette(material)
+	for outline in outlines:
+		outline.set_shader_parameter("use_texture_color", enabled and not use_pmx_outline_colors)
+	if changed:
+		# Static point-light shadow maps need an instance update after caster uniforms change.
+		for instance in _mesh_instances:
+			if is_instance_valid(instance):
+				var setting := instance.cast_shadow
+				instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				instance.cast_shadow = setting
 	if not enabled:
 		return
 	for source in _map_sources:
@@ -162,6 +179,16 @@ func set_enhanced(enabled: bool) -> void:
 		if texture != null:
 			source.material.set_shader_parameter("generated_map", texture)
 			source.material.set_shader_parameter("has_generated_map", true)
+
+
+func _apply_palette(material: ShaderMaterial) -> void:
+	var kind: int = material.get_shader_parameter("category")
+	# User Ramps define final colors; the enhanced palette can deepen PMX Toon shadows.
+	var balance: bool = enhanced and not material.get_shader_parameter("has_warm_ramp") and not material.get_shader_parameter("has_cool_ramp")
+	var fallback: bool = balance
+	material.set_shader_parameter("color_gain", BRIGHT_GAINS[kind] if balance else Vector3.ONE)
+	var shadow: Color = SHADOW_TINTS[kind] if fallback else material.get_meta("source_shadow")
+	material.set_shader_parameter("shadow_color", shadow.linear_to_srgb())
 
 
 func set_eye_transparency(enabled: bool, strength: float = 0.3) -> void:
@@ -275,13 +302,14 @@ func set_shadow_threshold(value: float) -> void:
 
 func set_outline_width(pixels: float) -> void:
 	for material in outlines:
-		material.set_shader_parameter("outline_width", clampf(pixels, 0.0, 4.0))
+		material.set_shader_parameter("outline_width", clampf(pixels, 0.0, 6.0))
 
 
 func set_pmx_outline_colors(enabled: bool) -> void:
 	use_pmx_outline_colors = enabled
 	for index in outlines.size():
 		outlines[index].set_shader_parameter("outline_color", _source_outline_colors[index] if enabled else _game_outline_colors[index])
+		outlines[index].set_shader_parameter("use_texture_color", enhanced and not enabled)
 
 
 func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> ShaderMaterial:
@@ -315,7 +343,8 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 	material.shader = TOON
 	var transparent := float(rgba[3]) < 0.99
 	var double_sided := bool(entry.get("double_sided", previous is BaseMaterial3D and previous.cull_mode == BaseMaterial3D.CULL_DISABLED))
-	var variant := int(transparent) + int(double_sided) * 2
+	var ignore_shadows := not bool(entry.get("receive_shadow", true))
+	var variant := int(transparent) + int(double_sided) * 2 + int(ignore_shadows) * 4
 	if variant != 0:
 		if not _shader_variants.has(variant):
 			var shader := Shader.new()
@@ -324,6 +353,9 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 				code = code.replace("ALPHA_SCISSOR_THRESHOLD = alpha_cutoff;", "// Preserve original partial alpha.")
 			if double_sided:
 				code = code.replace("cull_back", "cull_disabled")
+			if ignore_shadows:
+				# Preserve point-light distance falloff while asking Godot to omit shadow visibility.
+				code = code.replace("ambient_light_disabled", "ambient_light_disabled, shadows_disabled")
 			shader.code = code
 			_shader_variants[variant] = shader
 		material.shader = _shader_variants[variant]
@@ -331,6 +363,28 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		material.render_priority = 1
 	material.set_shader_parameter("texture_albedo", texture)
 	material.set_shader_parameter("shadows_enabled", shadows_enabled)
+	material.set_shader_parameter("casts_shadows", bool(entry.get("cast_shadow", true)))
+	material.set_shader_parameter("shadow_receive", 1.0 if bool(entry.get("receive_shadow", true)) else 0.0)
+	for role in ["toon", "sphere"]:
+		var source_path: String = str(entry.get(role + "_texture", ""))
+		var source_texture: Texture2D = _textures.get(source_path)
+		if source_texture == null and not source_path.is_empty():
+			var image := Image.new()
+			if image.load(source_path) == OK and image.get_width() <= 8192 and image.get_height() <= 8192:
+				image.generate_mipmaps()
+				source_texture = ImageTexture.create_from_image(image)
+				_textures[source_path] = source_texture
+		var enabled: bool = source_texture != null and (role == "toon" or int(entry.get("sphere_mode", 0)) in [1, 2, 3])
+		material.set_shader_parameter("has_mmd_" + role, enabled)
+		material.set_shader_parameter("mmd_" + role, source_texture)
+	material.set_shader_parameter("sphere_mode", int(entry.get("sphere_mode", 0)))
+	material.set_shader_parameter("has_sphere_uv1", bool(entry.get("has_sphere_uv1", false)))
+	var source_specular: Array = entry.get("specular", [0.0, 0.0, 0.0])
+	material.set_shader_parameter("authored_specular", Color(source_specular[0], source_specular[1], source_specular[2]).linear_to_srgb())
+	material.set_shader_parameter("authored_shininess", maxf(0.001, float(entry.get("shininess", 32.0))))
+	if entry.has("ambient"):
+		var ambient: Array = entry.ambient
+		material.set_shader_parameter("ambient_floor", clampf(Color(ambient[0], ambient[1], ambient[2]).get_luminance(), 0.0, 1.0))
 	# PMX diffuse and the baseline ramp are linear multipliers; Godot converts Color uniforms from sRGB.
 	material.set_shader_parameter("base_color", Color(rgba[0], rgba[1], rgba[2], rgba[3]).linear_to_srgb())
 	material.set_shader_parameter("category", CATEGORY[kind])
@@ -338,9 +392,9 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 	material.set_shader_parameter("nose_height", head.get("nose_height", 0.02770555))
 	material.set_shader_parameter("face_bottom", head.get("face_bottom", -0.06))
 	material.set_shader_parameter("face_top", head.get("face_top", 0.12))
+	material.set_shader_parameter("eye_height", head.get("eye_height", lerpf(float(head.get("face_bottom", -0.06)), float(head.get("face_top", 0.12)), 0.55)))
 	var shadow := Color(0.54, 0.51, 0.70)
 	var ink := Color(0.15, 0.10, 0.23)
-	var gain := Vector3.ONE
 	if kind in ["face", "skin"]:
 		shadow = Color(0.88, 0.49, 0.46)
 		ink = Color(0.46, 0.20, 0.17)
@@ -353,11 +407,18 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		material.set_shader_parameter("specular_strength", 0.25)
 		material.set_shader_parameter("specular_color", Color(1.0, 0.94, 0.80))
 	elif kind == "eye":
-		gain = Vector3.ONE
-		if "眉" in name:
+		if _contains(name.to_lower(), ["眉", "brow"]):
 			material.set_shader_parameter("detail_kind", 1)
-	material.set_shader_parameter("shadow_color", shadow.linear_to_srgb())
-	material.set_shader_parameter("color_gain", gain)
+		elif _contains(name.to_lower(), ["睫", "lash"]):
+			material.set_shader_parameter("detail_kind", 2)
+	material.set_meta("source_shadow", shadow)
+	material.set_shader_parameter("palette_mix", 1.0 if kind == "cloth" else (0.3 if kind in ["face", "skin"] else 0.0))
+	if kind == "hair":
+		var hair_edge: Array = entry.get("edge_color", [])
+		if hair_edge.size() >= 3:
+			material.set_shader_parameter("palette_mix", clampf((maxf(hair_edge[0], maxf(hair_edge[1], hair_edge[2])) - minf(hair_edge[0], minf(hair_edge[1], hair_edge[2]))) * 2.5, 0.0, 1.0))
+	material.set_shader_parameter("enhanced", enhanced)
+	_apply_palette(material)
 	materials.append(material)
 	var edge_enabled: bool = bool(entry.get("edge_enabled", kind != "eye" and float(rgba[3]) >= 0.99))
 	if edge_enabled and float(rgba[3]) > 0.001:
@@ -365,13 +426,24 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		outline.shader = OUTLINE
 		outline.resource_name = name + " / Outline"
 		outline.set_shader_parameter("texture_albedo", texture)
+		outline.set_shader_parameter("base_color", material.get_shader_parameter("base_color"))
+		outline.set_shader_parameter("use_texture_color", enhanced and not use_pmx_outline_colors)
+		outline.set_shader_parameter("material_edge_scale", maxf(0.0, float(entry.get("edge_size", 1.0))))
 		var edge_color: Array = entry.get("edge_color", [ink.r, ink.g, ink.b, 1.0])
 		var original := Color(edge_color[0], edge_color[1], edge_color[2], edge_color[3])
+		if original.a < 0.99 and original.a > 0.001:
+			if not _shader_variants.has("outline_alpha"):
+				var alpha_outline := Shader.new()
+				alpha_outline.code = OUTLINE.code.replace("// OUTLINE_ALPHA_VARIANT", "ALPHA = outline_color.a;")
+				_shader_variants["outline_alpha"] = alpha_outline
+			outline.shader = _shader_variants["outline_alpha"]
 		var game_ink := Color(0.14, 0.13, 0.15, original.a)
 		if kind in ["face", "skin"]:
 			game_ink = Color(0.36, 0.24, 0.20, original.a)
 		elif kind == "hair":
 			game_ink = Color(0.28, 0.21, 0.24, original.a)
+			if maxf(original.r, maxf(original.g, original.b)) > 0.1:
+				game_ink = game_ink.lerp(original, 0.5)
 		_source_outline_colors.append(original)
 		_game_outline_colors.append(game_ink)
 		outline.set_shader_parameter("outline_color", original if use_pmx_outline_colors else game_ink)
