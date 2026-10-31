@@ -132,9 +132,9 @@ void fragment() {
 	if (shadows_enabled && enhanced && category == 2) {
 		float head_scale = max(face_top - face_bottom, 0.01) / 0.18;
 		vec3 local_head = head_position / head_scale;
-		vec3 crown = normalize(vec3(local_head.x, local_head.y * 0.7 - 0.056, local_head.z + 0.01));
+		vec3 crown = normalize(vec3(local_head.x * 0.65, local_head.y * 0.7 + 0.025, (local_head.z + 0.01) * 0.65));
 		vec3 crown_view = normalize((VIEW_MATRIX * head_to_world * vec4(crown, 0.0)).xyz);
-		float crown_weight = smoothstep(0.07, 0.14, local_head.y) * 0.8;
+		float crown_weight = smoothstep(0.04, 0.12, local_head.y) * 0.95;
 		NORMAL = normalize(mix(NORMAL, crown_view, crown_weight));
 	}
 	if (shadows_enabled && enhanced && detail_kind == 1) {
