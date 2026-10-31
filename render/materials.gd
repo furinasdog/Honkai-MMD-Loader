@@ -7,8 +7,7 @@ const GENERATED_MAPS = preload("res://plugins/honkai_mmd/render/generated_maps.g
 const HAIR_STENCIL: Shader = preload("res://plugins/honkai_mmd/render/hair_stencil.gdshader")
 const EYE_OVERLAY: Shader = preload("res://plugins/honkai_mmd/render/eye_overlay.gdshader")
 const CATEGORY := {"face": 0, "skin": 1, "hair": 2, "cloth": 3, "metal": 4, "eye": 5}
-const BRIGHT_GAINS := [Vector3(1.03, 1.11, 1.07), Vector3(1.03, 1.11, 1.07), Vector3(1.10, 1.06, 1.02), Vector3(1.06, 1.04, 1.02), Vector3.ONE, Vector3.ONE]
-const SHADOW_TINTS := [Color(0.94, 0.61, 0.57), Color(0.94, 0.61, 0.57), Color(0.67, 0.33, 0.41), Color(0.66, 0.27, 0.44), Color(0.66, 0.65, 0.80), Color.WHITE]
+const SHADOW_TINTS := [Color(0.85, 0.62, 0.58), Color(0.85, 0.62, 0.58), Color(0.60, 0.62, 0.65), Color(0.60, 0.62, 0.65), Color(0.60, 0.62, 0.65), Color.WHITE]
 const MAP_ROLES := {"face_map": "FaceMap · RGBA", "face_sdf": "面部 SDF · 灰度", "light_map": "LightMap · RGBA", "warm_ramp": "暖色 Ramp", "cool_ramp": "冷色 Ramp", "highlight_map": "高光遮罩 · 灰度"}
 
 var materials: Array[ShaderMaterial] = []
@@ -183,11 +182,8 @@ func set_enhanced(enabled: bool) -> void:
 
 func _apply_palette(material: ShaderMaterial) -> void:
 	var kind: int = material.get_shader_parameter("category")
-	# User Ramps define final colors; the enhanced palette can deepen PMX Toon shadows.
-	var balance: bool = enhanced and not material.get_shader_parameter("has_warm_ramp") and not material.get_shader_parameter("has_cool_ramp")
-	var fallback: bool = balance
-	material.set_shader_parameter("color_gain", BRIGHT_GAINS[kind] if balance else Vector3.ONE)
-	var shadow: Color = SHADOW_TINTS[kind] if fallback else material.get_meta("source_shadow")
+	# Missing Ramp data uses a category palette, never diffuse or outline pigment.
+	var shadow: Color = SHADOW_TINTS[kind] if enhanced else material.get_meta("source_shadow")
 	material.set_shader_parameter("shadow_color", shadow.linear_to_srgb())
 
 
@@ -295,9 +291,7 @@ func set_shadows_enabled(enabled: bool) -> void:
 
 func set_shadow_threshold(value: float) -> void:
 	for material in materials:
-		var kind: int = material.get_shader_parameter("category")
-		var offset := -0.08 if kind == CATEGORY.hair else 0.0
-		material.set_shader_parameter("shadow_threshold", clampf(value + offset, -0.5, 0.7))
+		material.set_shader_parameter("shadow_threshold", clampf(value, -0.5, 0.7))
 
 
 func set_outline_width(pixels: float) -> void:
@@ -355,7 +349,7 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 				code = code.replace("cull_back", "cull_disabled")
 			if ignore_shadows:
 				# Preserve point-light distance falloff while asking Godot to omit shadow visibility.
-				code = code.replace("ambient_light_disabled", "ambient_light_disabled, shadows_disabled")
+				code = code.replace("specular_disabled", "specular_disabled, shadows_disabled")
 			shader.code = code
 			_shader_variants[variant] = shader
 		material.shader = _shader_variants[variant]
@@ -402,7 +396,6 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		shadow = Color(0.61, 0.32, 0.42)
 		ink = Color(0.44, 0.25, 0.34)
 		material.set_shader_parameter("specular_strength", 0.06)
-		material.set_shader_parameter("shadow_threshold", 0.22)
 	elif kind == "metal":
 		material.set_shader_parameter("specular_strength", 0.25)
 		material.set_shader_parameter("specular_color", Color(1.0, 0.94, 0.80))
@@ -412,12 +405,6 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		elif _contains(name.to_lower(), ["睫", "lash"]):
 			material.set_shader_parameter("detail_kind", 2)
 	material.set_meta("source_shadow", shadow)
-	material.set_shader_parameter("palette_mix", 1.0 if kind == "cloth" else (0.3 if kind in ["face", "skin"] else 0.0))
-	if kind == "hair":
-		var hair_edge: Array = entry.get("edge_color", [])
-		if hair_edge.size() >= 3:
-			material.set_shader_parameter("palette_mix", clampf((maxf(hair_edge[0], maxf(hair_edge[1], hair_edge[2])) - minf(hair_edge[0], minf(hair_edge[1], hair_edge[2]))) * 2.5, 0.0, 1.0))
-			material.set_shader_parameter("hair_shadow_pigment", smoothstep(0.01, 0.08, minf(hair_edge[0], hair_edge[2]) - hair_edge[1]))
 	material.set_shader_parameter("enhanced", enhanced)
 	_apply_palette(material)
 	materials.append(material)

@@ -14,17 +14,19 @@ Custom lighting-map assignments are saved by temporary-file replacement. A faile
 
 `HonkaiMMDMaterials.apply(root, metadata)` installs the toon and outline shaders. It preserves texture UVs, source diffuse colors, single/double-sided surfaces and material boundaries. The face uses a head-local shadow field; hair uses a stylized highlight; outlines preserve PMX per-vertex width and optional source colors. Character assets and game shaders are not included.
 
-The face shadow is a two-tone field, independent of lip/nose/chin surface normals and view-dependent rim lighting. Tonal boundaries use only a screen-pixel antialiasing transition, avoiding a soft lower-face "beard" under high lights or mouth morphs. Clothing and hair keep their toon normal bands; authored texture colors are preserved.
+The face shadow is a head-local field, independent of lip/nose/chin surface normals and view-dependent rim lighting. Enhanced normal bands use softness 0.025 and face SDF boundaries use 0.015, with a screen-derivative minimum for raster antialiasing. An eye-height mask restricts facial projected shadows to the upper face; skin below the head receives ordinary projected shadows. Authored texture colors and mesh normals are preserved.
 
 Runtime material colors preserve PMX linear diffuse values and the linear toon palette when passed through Godot's Color conversion. The loader also preserves authored PMX bone tail offsets in `pmx_tail_offsets` skeleton metadata so host retargeters can resolve terminal finger axes without assuming a local Y axis.
 
-Enhanced rendering defaults on: body/cloth use broad two-tone bands, face data is evaluated in head space, and hair retains controlled cast shadows. Missing face/nose/highlight helpers are generated from the model geometry and UVs and cached by geometry fingerprint. These are approximate angular thresholds, not official artist-authored FaceMaps. `set_enhanced(false)` restores basic toon shading and original textures.
+Enhanced rendering defaults on: body, skin, hair and metal share half-Lambert and LightMap threshold rules and receive directional projected shadows, subject to the source receive-shadow flag. All characters use the same material rules; diffuse colors, outline pigments and character names do not select shadow corrections. There is no crown-normal replacement or neck/chest shadow exemption. Missing face/nose/highlight helpers are generated from the model geometry and UVs and cached by geometry fingerprint. These are approximate angular thresholds, not official artist-authored FaceMaps. `set_enhanced(false)` restores basic toon shading and original textures.
+
+The host supplies Godot environment diffuse irradiance. LightMap R controls its ambient AO independently as `0.5 + 0.5 * R`; it also scales direct illumination before Ramp sampling. A supplied warm/cool Ramp takes precedence over PMX Toon. Without a Ramp, the authored Toon remains in use; without either, a shared material-category palette supplies the shadow tone. PMX Sphere multiplication and addition remain intact.
 
 `material_slots` exposes stable IDs and source names. `import_custom_map(id, role, path)` accepts FaceMap, grayscale SDF, LightMap, warm/cool Ramp or grayscale highlight masks; `remove_custom_map` restores the fallback. Data maps use linear sampling, color Ramps use sRGB sampling. Imported images are copied into the current user's cache and assignments persist per model identity.
 
 `set_eye_transparency(enabled, strength)` defaults off. Depth-tested hair stencil masks restrict a later eye-detail pass; foreground geometry still occludes the eye, with frontal-angle gating. External facial openings use a red-channel outline mask while authored alpha edge weights and morph topology remain intact. This needs the pinned Godot 4.7 stencil renderer; other renderer versions are not validated.
 
-`set_shadows_enabled(false)` bypasses computed normal, cast and face-field shadows for every material. Source texture colors, UVs, alpha and outlines remain; newly applied models inherit the current setting. Re-enable it to restore toon lighting.
+`set_shadows_enabled(false)` bypasses computed normal, cast and face-field shadows and suppresses environment lighting for every material. Source texture colors, additive Sphere output, UVs, alpha and outlines remain; newly applied models inherit the current setting. Re-enable it to restore toon lighting.
 
 ## Build and validation
 
