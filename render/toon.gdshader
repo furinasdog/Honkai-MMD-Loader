@@ -17,6 +17,7 @@ uniform bool has_cool_ramp = false;
 uniform bool has_highlight_map = false;
 uniform bool has_mmd_toon = false;
 uniform float palette_mix = 0.0;
+uniform float hair_shadow_pigment = 0.0;
 uniform bool has_mmd_sphere = false;
 uniform bool has_sphere_uv1 = false;
 uniform bool casts_shadows = true;
@@ -53,6 +54,7 @@ varying vec3 head_position;
 varying vec2 sphere_uv1;
 varying vec3 sphere_multiplier;
 varying vec3 source_albedo;
+varying float pigment_saturation;
 
 float toon_step(float threshold, float value) {
 	// Keep two flat tones; soften only the one-pixel raster boundary.
@@ -75,6 +77,11 @@ void fragment() {
 	}
 	vec4 sampled = texture(texture_albedo, UV);
 	vec3 diffuse_sample = sampled.rgb * base_color.rgb;
+	vec3 pigment = clamp(diffuse_sample, vec3(0.0), vec3(1.0));
+	pigment = mix(pigment * 12.92, 1.055 * pow(pigment, vec3(1.0 / 2.4)) - vec3(0.055), step(vec3(0.0031308), pigment));
+	float pigment_max = max(max(pigment.r, pigment.g), pigment.b);
+	// Palette membership uses ungraded display chroma; linear contrast exaggerates blue-gray saturation.
+	pigment_saturation = (pigment_max - min(min(pigment.r, pigment.g), pigment.b)) / max(pigment_max, 0.001);
 	ALBEDO = diffuse_sample + diffuse_sample * (color_gain - vec3(1.0)) * clamp(vec3(1.0) - diffuse_sample, vec3(0.0), vec3(1.0));
 	if (enhanced && category == 3 && !has_warm_ramp && !has_cool_ramp) {
 		float chroma = max(max(ALBEDO.r, ALBEDO.g), ALBEDO.b) - min(min(ALBEDO.r, ALBEDO.g), ALBEDO.b);
@@ -82,8 +89,10 @@ void fragment() {
 		// Preserve a small channel floor when increasing cyan or blue saturation.
 		float saturation = clamp((luminance - 0.03) / max(luminance - min(min(ALBEDO.r, ALBEDO.g), ALBEDO.b), 0.0001), 1.0, 1.35);
 		ALBEDO = clamp(mix(vec3(luminance), ALBEDO, saturation) * (1.0 - 0.35 * chroma), vec3(0.0), vec3(1.0));
-		float white_fabric = smoothstep(0.70, 0.83, min(min(ALBEDO.r, ALBEDO.g), ALBEDO.b)) * (1.0 - smoothstep(0.12, 0.20, chroma));
-		ALBEDO += (vec3(1.0) - ALBEDO) * white_fabric * vec3(0.50, 0.25, 0.40);
+		float dark_neutral = smoothstep(0.015, 0.08, luminance) * (1.0 - smoothstep(0.20, 0.40, luminance)) * (1.0 - smoothstep(0.12, 0.28, pigment_saturation));
+		ALBEDO *= 1.0 - 0.45 * dark_neutral;
+		float white_fabric = smoothstep(0.62, 0.80, min(min(ALBEDO.r, ALBEDO.g), ALBEDO.b)) * (1.0 - smoothstep(0.12, 0.20, chroma));
+		ALBEDO += (vec3(1.0) - ALBEDO) * white_fabric * vec3(0.66, 0.58, 0.45);
 	}
 	if (enhanced && category == 2 && palette_mix > 0.0 && !has_warm_ramp && !has_cool_ramp) {
 		ALBEDO = mix(ALBEDO, clamp((ALBEDO - vec3(0.75)) * 1.45 + vec3(0.85, 0.81, 0.78), vec3(0.0), vec3(1.0)), palette_mix);
@@ -91,7 +100,8 @@ void fragment() {
 	if (enhanced && category == 2 && !has_light_map && !has_warm_ramp && !has_cool_ramp) {
 		float pale_hair = smoothstep(0.40, 0.65, dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722)));
 		float pink_pigment = smoothstep(0.018, 0.05, ALBEDO.r - ALBEDO.g);
-		float lower_hair = 1.0 - smoothstep(-0.10, 0.13, head_position.y);
+		float head_scale = max(face_top - face_bottom, 0.01) / 0.18;
+		float lower_hair = 1.0 - smoothstep(-0.10, 0.13, head_position.y / head_scale);
 		ALBEDO *= mix(vec3(1.0), vec3(0.84, 0.50, 0.61), lower_hair * pale_hair * pink_pigment);
 	}
 	if (enhanced && category == 0 && !has_warm_ramp && !has_cool_ramp) {
@@ -120,9 +130,11 @@ void fragment() {
 		ALBEDO = mix(ALBEDO, ALBEDO * vec3(0.65, 0.39, 0.33), nose_ink);
 	}
 	if (shadows_enabled && enhanced && category == 2) {
-		vec3 crown = normalize(vec3(head_position.x, head_position.y * 0.7 - 0.056, head_position.z + 0.01));
+		float head_scale = max(face_top - face_bottom, 0.01) / 0.18;
+		vec3 local_head = head_position / head_scale;
+		vec3 crown = normalize(vec3(local_head.x, local_head.y * 0.7 - 0.056, local_head.z + 0.01));
 		vec3 crown_view = normalize((VIEW_MATRIX * head_to_world * vec4(crown, 0.0)).xyz);
-		float crown_weight = smoothstep(0.07, 0.14, head_position.y) * 0.8;
+		float crown_weight = smoothstep(0.07, 0.14, local_head.y) * 0.8;
 		NORMAL = normalize(mix(NORMAL, crown_view, crown_weight));
 	}
 	if (shadows_enabled && enhanced && detail_kind == 1) {
@@ -155,15 +167,21 @@ void light() {
 			threshold = clamp(has_light_map ? 1.0 - light_data.g + (style_threshold - 0.3) * 0.5 : style_threshold * 0.5 + 0.35, 0.01, 0.99);
 			if (category == 3 && !has_light_map && !has_warm_ramp && !has_cool_ramp) {
 				threshold -= 0.18 * smoothstep(0.45, 0.65, min(min(source_albedo.r, source_albedo.g), source_albedo.b));
+				threshold += 0.06 * smoothstep(0.18, 0.40, pigment_saturation);
 			}
 			irradiance = n_dot_l * 0.5 + 0.5;
 			if (category == 1 || category == 2) {
 				// Skin and hair quantize the combined lighting once, including cast-shadow visibility.
 				float cast_receive = shadow_receive;
 				if (category == 1 && !has_light_map && !has_warm_ramp && !has_cool_ramp) {
-					// Hair-to-neck projection is suppressed on the rear skin, while front contact stays shaded.
-					float rear_neck = (1.0 - smoothstep(-0.02, 0.01, head_position.z)) * smoothstep(-0.18, -0.13, head_position.y) * (1.0 - smoothstep(0.01, 0.05, head_position.y));
-					cast_receive *= 1.0 - rear_neck;
+					// shortcut: head proportions bound neck contact until an authored skin LightMap or Ramp is supplied.
+					float height = max(face_top - face_bottom, 0.01);
+					float neck = (1.0 - smoothstep(face_half_width, face_half_width * 1.6, abs(head_position.x)))
+						* smoothstep(face_bottom - height, face_bottom - height * 0.8, head_position.y)
+						* (1.0 - smoothstep(face_bottom + height * 0.3, face_bottom + height * 0.5, head_position.y));
+					float contact = smoothstep(face_bottom - height * 0.30, face_bottom - height * 0.06, head_position.y)
+						* smoothstep(-face_half_width * 0.25, face_half_width * 0.12, head_position.z);
+					cast_receive *= mix(1.0, contact, neck);
 				}
 				irradiance *= mix(1.0, ATTENUATION, cast_receive);
 			}
@@ -192,17 +210,30 @@ void light() {
 					band = mix(face_data.g, band, 1.0 - step(0.5, face_data.r));
 				}
 			}
-			float forehead = toon_step(eye_height - face_height * 0.08, head_position.y);
+			float forehead = smoothstep(eye_height - face_height * 0.08, eye_height + face_height * 0.03, head_position.y);
 			cast_light = mix(1.0, cast_light, forehead);
 			illumination = min(band, mix(1.0, cast_light, shadow_receive));
+		}
+		if (enhanced && category != 0 && has_light_map) {
+			illumination *= light_data.r;
 		}
 		bool cloth_palette = enhanced && category == 3 && !has_light_map && !has_warm_ramp && !has_cool_ramp;
 		float blue_pigment = cloth_palette ? smoothstep(0.10, 0.20, source_albedo.b - source_albedo.g) * smoothstep(0.05, 0.12, source_albedo.g - source_albedo.r) : 0.0;
 		float pink_pigment = cloth_palette ? smoothstep(0.15, 0.30, min(source_albedo.r, source_albedo.b) - source_albedo.g) : 0.0;
-		vec3 tint = mix(shadow_color.rgb, vec3(1.0), illumination);
+		float colored_pigment = smoothstep(0.18, 0.40, pigment_saturation);
+		vec3 fallback_shadow = shadow_color.rgb;
+		if (enhanced && (category == 2 || category == 3) && !has_warm_ramp && !has_cool_ramp) {
+			// Neutral pigments must not inherit the magenta shadow of saturated cloth or pink hair.
+			vec3 neutral_shadow = category == 2 ? vec3(0.60, 0.62, 0.65) : vec3(0.54, 0.51, 0.70);
+			float shadow_pigment = category == 2 ? max(hair_shadow_pigment, smoothstep(0.01, 0.06, min(source_albedo.r, source_albedo.b) - source_albedo.g)) : colored_pigment;
+			fallback_shadow = mix(neutral_shadow, fallback_shadow, shadow_pigment);
+		}
+		vec3 tint = mix(fallback_shadow, vec3(1.0), illumination);
 		if (has_mmd_toon) {
 			vec3 authored = texture(mmd_toon, vec2(0.5, 1.0 - illumination)).rgb;
-			tint = mix(authored, category == 3 ? min(authored, tint) : tint, enhanced ? palette_mix : 0.0);
+			vec3 neutral_authored = authored * min(1.0, dot(tint, vec3(0.2126, 0.7152, 0.0722)) / max(dot(authored, vec3(0.2126, 0.7152, 0.0722)), 0.0001));
+			vec3 styled = category == 3 ? mix(neutral_authored, min(authored, tint), colored_pigment) : tint;
+			tint = mix(authored, styled, enhanced ? palette_mix : 0.0);
 		}
 		if (enhanced && (has_warm_ramp || has_cool_ramp)) {
 			float row = category == 0 || category == 2 ? 0.5 : (floor(clamp(light_data.a, 0.0, 0.999) * 8.0) + 0.5) / 8.0;
@@ -216,7 +247,7 @@ void light() {
 		if (enhanced && category == 3 && !has_light_map && !has_warm_ramp && !has_cool_ramp) {
 			float white_cloth = smoothstep(0.55, 0.75, min(min(ALBEDO.r, ALBEDO.g), ALBEDO.b));
 			white_cloth *= smoothstep(0.05, 0.25, min(min(tint.r, tint.g), tint.b));
-			tint = mix(tint, vec3(1.0), white_cloth * 0.30);
+			tint = mix(tint, vec3(0.54, 0.51, 0.70), white_cloth * (1.0 - illumination) * 0.65);
 		}
 		if (cloth_palette) {
 			// shortcut: source hue and brightness approximate painted folds until authored cloth masks exist.
@@ -248,7 +279,7 @@ void light() {
 			float strand_dot = dot(strand, halfway);
 			float anisotropic = sqrt(max(0.0, 1.0 - strand_dot * strand_dot));
 			highlight = smoothstep(0.987, 0.997, anisotropic) * smoothstep(0.15, 0.6, dot(NORMAL, halfway));
-			highlight *= smoothstep(0.035, 0.09, head_position.y);
+			highlight *= smoothstep(0.035, 0.09, head_position.y / (max(face_top - face_bottom, 0.01) / 0.18));
 			if (enhanced && has_generated_map && !has_highlight_map && !has_light_map) {
 				highlight *= texture(generated_map, UV).b;
 			}

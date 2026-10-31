@@ -417,6 +417,7 @@ func _make_material(entry: Dictionary, head: Dictionary, previous: Material) -> 
 		var hair_edge: Array = entry.get("edge_color", [])
 		if hair_edge.size() >= 3:
 			material.set_shader_parameter("palette_mix", clampf((maxf(hair_edge[0], maxf(hair_edge[1], hair_edge[2])) - minf(hair_edge[0], minf(hair_edge[1], hair_edge[2]))) * 2.5, 0.0, 1.0))
+			material.set_shader_parameter("hair_shadow_pigment", smoothstep(0.01, 0.08, minf(hair_edge[0], hair_edge[2]) - hair_edge[1]))
 	material.set_shader_parameter("enhanced", enhanced)
 	_apply_palette(material)
 	materials.append(material)
